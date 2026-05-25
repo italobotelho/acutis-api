@@ -1,0 +1,14 @@
+# API Backend (Web Server)
+fastapi==0.103.1
+uvicorn==0.23.2
+
+# Database Access & ORM
+psycopg2-binary==2.9.7
+SQLAlchemy==2.0.20
+
+# Web Scraping & Data Extraction
+beautifulsoup4==4.12.2
+requests==2.31.0
+
+# Environment Variables
+python-dotenv==1.0.0
