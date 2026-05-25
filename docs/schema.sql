@@ -1,11 +1,7 @@
--- ==============================================================================
 -- The Acutis API - Database Schema (PostgreSQL)
--- ==============================================================================
 
--- ==============================================================================
 -- 1. POPES TABLE
 -- Note: saint_id foreign key constraint is added later to avoid circular dependency
--- ==============================================================================
 CREATE TABLE popes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     succession_number INT NOT NULL,
@@ -17,12 +13,10 @@ CREATE TABLE popes (
     pontificate_start DATE NOT NULL,
     pontificate_end DATE,
     end_reason VARCHAR(50),
-    saint_id UUID -- FK added later
+    saint_id UUID
 );
 
--- ==============================================================================
--- 2. SAINTS TABLE (The Core)
--- ==============================================================================
+-- 2. SAINTS TABLE
 CREATE TABLE saints (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     official_name VARCHAR(150) NOT NULL,
@@ -55,9 +49,7 @@ ALTER TABLE popes
 ADD CONSTRAINT fk_pope_saint
 FOREIGN KEY (saint_id) REFERENCES saints(id);
 
--- ==============================================================================
--- 3. PATRONAGES (N:N Mapping)
--- ==============================================================================
+-- 3. PATRONAGES
 CREATE TABLE patronage_causes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     cause_name VARCHAR(100) NOT NULL,
@@ -71,9 +63,7 @@ CREATE TABLE saint_patronage (
     PRIMARY KEY (saint_id, cause_id)
 );
 
--- ==============================================================================
 -- 4. MIRACLES TABLE
--- ==============================================================================
 CREATE TABLE miracles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     saint_id UUID REFERENCES saints(id) ON DELETE SET NULL,
@@ -88,9 +78,7 @@ CREATE TABLE miracles (
     longitude DECIMAL(11,8)
 );
 
--- ==============================================================================
 -- 5. PERFORMANCE INDEXES
--- ==============================================================================
 CREATE INDEX idx_saints_name ON saints(official_name);
 CREATE INDEX idx_saints_status ON saints(current_status);
 CREATE INDEX idx_miracles_type ON miracles(miracle_type);

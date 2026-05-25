@@ -3,8 +3,8 @@ fastapi==0.103.1
 uvicorn==0.23.2
 
 # Database Access & ORM
-psycopg2-binary==2.9.7
-SQLAlchemy==2.0.20
+psycopg2-binary>=2.9.10
+SQLAlchemy>=2.0.36
 
 # Web Scraping & Data Extraction
 beautifulsoup4==4.12.2
