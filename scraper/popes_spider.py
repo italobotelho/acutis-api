@@ -3,101 +3,165 @@ from bs4 import BeautifulSoup
 import json
 import os
 import time
+import re
+from urllib.parse import urljoin
 
-class GCatholicPopesSpider:
-    """
-    Spider responsible for extracting the papal lineage from GCatholic.org
-    and saving it in JSON format (Seed Data).
-    """
-    
+class GCatholicDeepSpider:
     def __init__(self):
-        # Bot disguise and standard headers
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'http://www.gcatholic.org/'
         }
-        # Official URL for the chronological list
-        self.url = "http://www.gcatholic.org/hierarchy/pope/lineage.htm"
+        self.start_url = "http://www.gcatholic.org/hierarchy/pope/"
 
     def fetch_and_save(self):
-        print(f"[*] Accessing {self.url}...")
+        print(f"[*] Accessing main lineage page: {self.start_url}...")
+        response = requests.get(self.start_url, headers=self.headers, timeout=15)
         
-        try:
-            # GOOD PRACTICE: 2-second pause to avoid overloading their server
-            time.sleep(2) 
-            
-            response = requests.get(self.url, headers=self.headers)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            popes_data = self._parse_table(soup)
-            
-            if popes_data:
-                self._save_to_json(popes_data)
-            
-        except requests.exceptions.RequestException as e:
-            print(f"[!] Connection error with GCatholic: {e}")
-
-    def _parse_table(self, soup):
-        popes_list = []
+        print(f"[*] Server Response Code: {response.status_code}")
         
-        # Find all tables on the page
+        soup = BeautifulSoup(response.text, 'html.parser')
         tables = soup.find_all('table')
+        
         if not tables:
-            print("[!] No tables found in the HTML.")
-            return []
+            print("[!] FATAL: No tables found on the page.")
+            print("[?] HTML snapshot (First 500 chars):")
+            print(response.text[:500])
+            return 
             
-        # Senior Tactic: The main table is usually the one with the most rows (<tr>)
         main_table = max(tables, key=lambda t: len(t.find_all('tr')))
         rows = main_table.find_all('tr')
         
-        print(f"[*] Main table found with {len(rows)} rows. Processing...")
+        popes_list = []
         
-        # Iterate row by row, ignoring the header
+        print(f"[*] Starting Deep Crawl for {len(rows)} potential records. This may take 3-5 minutes...")
+        
         for row in rows:
             cols = row.find_all('td')
-            
-            # If the row has enough data (avoids empty or divider rows)
-            if len(cols) >= 4: 
-                try:
-                    # Clean up using list comprehension and strip
-                    clean_cols = [" ".join(col.text.split()) for col in cols]
-                    
-                    pope = {
-                        "succession_number": clean_cols[0],
-                        "papal_name": clean_cols[1],
-                        "pontificate_start": clean_cols[2],
-                        "pontificate_end": clean_cols[3],
-                        "notes": clean_cols[4] if len(clean_cols) > 4 else None
+            if len(cols) >= 4:
+                num_text = cols[0].text.strip()
+                
+                if num_text.isdigit():
+                    pope_data = {
+                        "succession_number": num_text,
+                        "papal_name": " ".join(cols[1].text.split()),
+                        "pontificate_start": " ".join(cols[2].text.split()),
+                        "pontificate_end": " ".join(cols[3].text.split()),
+                        "notes": " ".join(cols[4].text.split()) if len(cols) > 4 else None
                     }
                     
-                    # Ensure we only capture rows where the first column is a valid number (e.g., "266")
-                    if pope["succession_number"].isdigit():
-                        popes_list.append(pope)
+                    a_tag = cols[1].find('a')
+                    if a_tag and 'href' in a_tag.attrs:
+                        profile_url = urljoin(self.start_url, a_tag['href'])
                         
-                except Exception as e:
-                    # Ignore failures on broken rows and continue
-                    continue
+                        enriched_data = self._scrape_profile(profile_url)
+                        pope_data.update(enriched_data)
+                        
+                        # Politeness delay to avoid server blocks
+                        time.sleep(1)
+                        
+                    popes_list.append(pope_data)
                     
-        return popes_list
+        self._save_to_json(popes_list)
+
+    def _scrape_profile(self, url):
+        print(f"    [>] Deep Scraping profile: {url}")
+        
+        data = {
+            "baptism_name": None, "profile_pontificate_start": None, "profile_pontificate_end": None,
+            "birth_date": None, "birth_place": None, "episcopal_motto": None, 
+            "cardinals_created": 0, "documents_issued": 0, "saints_proclaimed": 0, "blesseds_proclaimed": 0,
+            "ordained_priest_date": None, "consecrated_bishop_date": None,
+            "created_cardinal_date": None, "elected_pontiff_date": None,
+            "installed_pontiff_date": None, "death_date": None, "death_place": None,
+            "beatified_date": None, "canonised_date": None, "feast_day": None,
+            "buried_at": None, "religious_order": None
+        }
+        
+        try:
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            
+            lines = [line.strip() for line in soup.get_text(separator='\n').splitlines() if line.strip()]
+            
+            # 1. Parse Header (Name and basic dates)
+            for i in range(min(10, len(lines))):
+                line = lines[i]
+                
+                if line.startswith('(') and line.endswith(')') and re.match(r'^\([A-Za-z\s\.\,\-]+\)$', line):
+                    data["baptism_name"] = line.strip('()').strip()
+                    
+                if re.match(r'^\d{1,4}[\d\.\?]*\s*[-–]', line):
+                    parts = re.split(r'[-–]', line)
+                    if len(parts) >= 2:
+                        data["profile_pontificate_start"] = parts[0].strip()
+                        data["profile_pontificate_end"] = parts[1].strip()
+
+            # 2. Extract Religious Order
+            for line in lines:
+                if line.startswith("Priest of ") and any(x in line for x in ["Order", "Society", "Congregation", "Friars", "Monks"]):
+                    m = re.search(r'Priest of (.*?)\s*\(\d{4}', line)
+                    if m:
+                        data["religious_order"] = m.group(1).strip()
+                        break
+                        
+            text = ' '.join(lines)
+            
+            def extract(pattern):
+                match = re.search(pattern, text, re.IGNORECASE)
+                return match.group(1).strip() if match else None
+
+            # 3. Extract Complex Dates (Birth and Death)
+            born_match = re.search(r'Born:\s*(?:([\d\.\?]+)\s*)?\((.*?)\)', text)
+            if born_match:
+                if born_match.group(1): data["birth_date"] = born_match.group(1).replace('.', '-')
+                data["birth_place"] = born_match.group(2).strip()
+                
+            died_match = re.search(r'Died:\s*([\d\.\?]+)\s*🩸?\s*\((.*?)(?:†|outlived|\))', text)
+            if died_match:
+                data["death_date"] = died_match.group(1).replace('.', '-')
+                data["death_place"] = died_match.group(2).strip().strip('(').strip()
+
+            # 4. Extract Standard Metrics
+            data["episcopal_motto"] = extract(r'Episcopal Motto:\s*([^B]+)Born:')
+            data["ordained_priest_date"] = extract(r'Ordained Priest:\s*([\d\.\?]+)')
+            data["consecrated_bishop_date"] = extract(r'Consecrated Bishop:\s*([\d\.\?]+)')
+            data["created_cardinal_date"] = extract(r'Created Cardinal:\s*([\d\.\?]+)')
+            data["elected_pontiff_date"] = extract(r'Elected as Supreme Pontiff:\s*([\d\.\?]+)')
+            data["installed_pontiff_date"] = extract(r'Installed as Supreme Pontiff:\s*([\d\.\?]+)')
+            data["beatified_date"] = extract(r'Beatified:\s*([\d\.\?]+)')
+            data["canonised_date"] = extract(r'Canonised:\s*([\d\.\?]+)')
+            
+            feast = extract(r'Feast:\s*([\d\.\-]+)')
+            if feast: 
+                data["feast_day"] = feast.replace('.', '-')
+
+            # 5. Statistics
+            if card := extract(r'(\d+)\s*Cardinals'): data["cardinals_created"] = int(card)
+            if doc := extract(r'(\d+)\s*Documents'): data["documents_issued"] = int(doc)
+            if saint := extract(r'(\d+)\s*Saints'): data["saints_proclaimed"] = int(saint)
+            if bless := extract(r'(\d+)\s*Blesseds'): data["blesseds_proclaimed"] = int(bless)
+
+            # 6. Burial Place (Cleaning navigation artifacts)
+            burial_match = re.search(r'Buried at:\s*(.*?)(?:©|$)', text)
+            if burial_match:
+                b_text = burial_match.group(1).strip()
+                b_text = re.sub(r'\s*Pope\s+[A-Z].*$', '', b_text)
+                data["buried_at"] = b_text.strip()
+                
+        except Exception as e:
+            print(f"    [!] Failed to deep scrape: {e}")
+            
+        return data
 
     def _save_to_json(self, data):
-        """
-        Ensures the /data folder exists and saves the JSON file.
-        """
-        # Creates the 'data' folder in the project root if it doesn't exist
         os.makedirs('data', exist_ok=True)
-        filepath = 'data/popes.json'
-        
-        # Saves the file preserving special characters
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open('data/popes.json', 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-            
-        print(f"\n=== SUCCESS: {len(data)} Popes extracted and structured ===")
-        print(f"[*] Data safely saved to: {filepath}")
+        print(f"\n=== SUCCESS: {len(data)} Enriched Popes saved! ===")
 
-# ==========================================
-# Execution Block
-# ==========================================
 if __name__ == "__main__":
-    spider = GCatholicPopesSpider()
+    spider = GCatholicDeepSpider()
     spider.fetch_and_save()
